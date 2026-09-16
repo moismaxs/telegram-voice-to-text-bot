@@ -39,6 +39,8 @@ def get_model() -> WhisperModel:
         _model = WhisperModel(
             settings.MODEL_SIZE, device="cpu",
             compute_type=settings.COMPUTE_TYPE, download_root=cache,
+            # меньше потоков — ниже пиковая RAM (важно на тарифах 1 ГБ)
+            cpu_threads=2, num_workers=1,
         )
         log.info("Модель загружена")
     return _model
@@ -68,10 +70,11 @@ def transcribe_wav(wav_path: Path, language: str = "ru") -> str:
     segments, info = model.transcribe(
         str(wav_path),
         language=language,
-        beam_size=5,
-        best_of=5,
-        # перебор температур спасает сложные куски (шум, акцент, быстрая речь)
-        temperature=(0.0, 0.2, 0.4, 0.6),
+        # beam уже: 5 -> 3 заметно режет пик RAM, качество почти не падает;
+        # greedy (1) — крайний вариант если 1 ГБ всё равно мало
+        beam_size=3,
+        # короткий fallback по температуре вместо длинного — меньше повторов декода
+        temperature=(0.0, 0.2),
         # подсказка модели: какой текст ожидать (заметно чистит русский)
         initial_prompt="Это расшифровка голосового сообщения на русском языке.",
         condition_on_previous_text=True,
