@@ -32,7 +32,7 @@ def convert_to_wav(src: Path, dst: Path, timeout: int = 60) -> None:
         str(dst),
     ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"ffmpeg timeout ({timeout}s): {e}")
     if res.returncode != 0:

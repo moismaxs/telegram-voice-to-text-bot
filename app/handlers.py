@@ -1,5 +1,6 @@
 """Хендлеры: /start + voice/audio/video_note с ответом в тот же чат."""
 import asyncio
+import contextlib
 import html
 import logging
 from pathlib import Path
@@ -144,17 +145,13 @@ async def handle_voice(message: Message, bot: Bot) -> None:
         await status.delete()
     except Exception:
         log.exception("Ошибка расшифровки file_id=%s", file_id)
-        try:
+        with contextlib.suppress(Exception):
             await status.edit_text("❌ Ошибка расшифровки, попробуй ещё раз чуть позже.")
-        except Exception:
-            pass
     finally:
         for p in (src_path, wav_path):
-            try:
+            with contextlib.suppress(OSError):
                 if p.exists():
                     p.unlink()
-            except Exception:
-                pass
 
 
 @router.message()
