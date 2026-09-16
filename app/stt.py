@@ -1,5 +1,6 @@
 """STT на faster-whisper + конвертация ogg->wav через ffmpeg."""
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -12,11 +13,33 @@ log = logging.getLogger(__name__)
 _model: WhisperModel | None = None
 
 
+def _cache_dir() -> str | None:
+    """Куда класть веса модели.
+
+    Приоритет: HF_HUB_CACHE/HF_HOME из окружения → /data/hf_cache если есть
+    персистентное хранилище (Amvera: эфемерный слой всего ~400Mi, модель
+    small ~500Mi туда не влезает) → иначе дефолт huggingface.
+    """
+    env = os.environ.get("HF_HUB_CACHE") or os.environ.get("HF_HOME")
+    if env:
+        return env
+    if Path("/data").is_dir():
+        return "/data/hf_cache"
+    return None
+
+
 def get_model() -> WhisperModel:
     global _model
     if _model is None:
-        log.info("Загрузка Whisper модели %s (%s)...", settings.MODEL_SIZE, settings.COMPUTE_TYPE)
-        _model = WhisperModel(settings.MODEL_SIZE, device="cpu", compute_type=settings.COMPUTE_TYPE)
+        cache = _cache_dir()
+        log.info(
+            "Загрузка Whisper модели %s (%s), кэш=%s...",
+            settings.MODEL_SIZE, settings.COMPUTE_TYPE, cache or "дефолтный",
+        )
+        _model = WhisperModel(
+            settings.MODEL_SIZE, device="cpu",
+            compute_type=settings.COMPUTE_TYPE, download_root=cache,
+        )
         log.info("Модель загружена")
     return _model
 
