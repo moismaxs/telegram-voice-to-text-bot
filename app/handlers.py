@@ -10,6 +10,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from app.config import settings
+from app.db import get_stats, track_event, track_user
 from app.stt import RateLimitedError, convert_to_wav, transcribe_file
 
 log = logging.getLogger(__name__)
@@ -31,12 +32,19 @@ PRIVACY_TEXT = (
     "Приватность 🔒\n\n"
     "• Голосовые качаются во временную папку и <b>удаляются сразу</b> после расшифровки.\n"
     "• Текст расшифровки <b>не храним</b> — только отвечаем им в чат.\n"
-    "• По запросу ничего хранить не будем — писать некуда, базы нет."
+    "• Для статистики считаем только user_id, имя и количество расшифровок "
+    "(без самих войсов и текстов)."
 )
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
+    if message.from_user and not message.from_user.is_bot:
+        track_user(
+            message.from_user.id,
+            message.from_user.username,
+            message.from_user.full_name,
+        )
     await message.answer(
         "Привет! Я расшифровываю голосовые 🎙\n\n"
         "• Отправь войс <b>сюда в личку</b> — пришлю текст ответом.\n"
@@ -54,6 +62,25 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("privacy"))
 async def cmd_privacy(message: Message) -> None:
     await message.answer(PRIVACY_TEXT)
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    """Только для админа (ADMIN_IDS). Не светим в /setcommands."""
+    if not message.from_user or message.from_user.id not in settings.admin_ids():
+        await message.answer("⛔ Нет доступа.")
+        return
+    s = get_stats()
+    if not s:
+        await message.answer("Аналитика недоступна (нет БД).")
+        return
+    await message.answer(
+        "📊 <b>Статистика</b>\n\n"
+        f"👥 Юзеров всего: <b>{s['users_total']}</b> (новых сегодня: {s['users_today']})\n"
+        f"🎙 Расшифровок: сегодня <b>{s['tr_today']}</b> · "
+        f"неделя {s['tr_week']} · всего {s['tr_total']}\n"
+        f"⏱ Средняя длина: {s['avg_dur']}с · ошибок: {s['errors']}"
+    )
 
 
 def _extract_file(message: Message) -> tuple[str, int | None, str] | None:
@@ -81,8 +108,10 @@ async def handle_voice(message: Message, bot: Bot) -> None:
     )
     if user is None or user.is_bot:
         return
+    track_user(user.id, user.username, user.full_name)
 
     if duration and duration > settings.MAX_DURATION_SEC:
+        track_event(user.id, message.chat.id, message.chat.type, label, duration, ok=False)
         await message.reply(
             f"⚠️ {label.capitalize()} слишком длинное ({duration}с). "
             f"Максимум — {settings.MAX_DURATION_SEC}с."
@@ -96,6 +125,7 @@ async def handle_voice(message: Message, bot: Bot) -> None:
     else:
         status_text = "⏳ Расшифровываю, секунду..."
     status = await message.reply(status_text)
+    ok = False
     tmp_dir = Path(settings.TMP_DIR)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     # нейтральное расширение: voice=ogg, кружок=mp4, аудио=mp3 — ffmpeg детектит сам
@@ -142,6 +172,7 @@ async def handle_voice(message: Message, bot: Bot) -> None:
             await message.reply(
                 f"📝 <b>Расшифровка</b> от {user_mention}:\n\n{safe_text}"
             )
+        ok = True
         await status.delete()
     except RateLimitedError:
         log.warning("STT rate limit, file_id=%s", file_id)
@@ -152,6 +183,7 @@ async def handle_voice(message: Message, bot: Bot) -> None:
         with contextlib.suppress(Exception):
             await status.edit_text("❌ Ошибка расшифровки, попробуй ещё раз чуть позже.")
     finally:
+        track_event(user.id, message.chat.id, message.chat.type, label, duration, ok=ok)
         for p in (src_path, wav_path):
             with contextlib.suppress(OSError):
                 if p.exists():

@@ -8,6 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from app.config import settings
+from app.db import init_db
 from app.handlers import router
 from app.stt import get_model
 
@@ -31,20 +32,32 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Прогрев модели до polling: первая расшифровка не висит,
-    # а ошибка скачивания видна сразу в логах, а не на первом войсе.
+    # Прогрев локальной модели до polling имеет смысл только для local:
+    # в режиме groq веса не нужны, а грузить 500МБ в RAM зря — вредно.
+    if settings.STT_PROVIDER == "local":
+        try:
+            await asyncio.to_thread(get_model)
+        except Exception:
+            log.exception(
+                "Не удалось загрузить Whisper-модель %s. Проверь сеть/кэш.",
+                settings.MODEL_SIZE,
+            )
+            await bot.session.close()
+            raise SystemExit(2)
+    else:
+        log.info("STT через %s, локальная модель не грузится", settings.STT_PROVIDER)
+
     try:
-        await asyncio.to_thread(get_model)
+        db = await asyncio.to_thread(init_db)
     except Exception:
-        log.exception(
-            "Не удалось загрузить Whisper-модель %s. Проверь сеть/кэш.",
-            settings.MODEL_SIZE,
-        )
-        await bot.session.close()
-        raise SystemExit(2)
+        log.exception("Не удалось открыть SQLite, аналитики не будет")
+    else:
+        log.info("Аналитика: %s", db)
 
     me = await bot.get_me()
-    log.info("Бот @%s запущен. Модель=%s, max=%sс", me.username, settings.MODEL_SIZE, settings.MAX_DURATION_SEC)
+    log.info(
+        "Бот @%s запущен. STT=%s, max=%sс", me.username, settings.STT_PROVIDER, settings.MAX_DURATION_SEC,
+    )
     try:
         await dp.start_polling(bot)
     finally:

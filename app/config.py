@@ -14,6 +14,16 @@ class Settings(BaseSettings):
     STT_PROVIDER: str = "local"
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "whisper-large-v3-turbo"
+    # через запятую, например "123456789". Пусто — /stats закрыт для всех.
+    ADMIN_IDS: str = ""
+    # Пусто — авто: /data/voices.db если есть /data, иначе voices.db рядом.
+    DB_PATH: str = ""
+
+    def admin_ids(self) -> set[int]:
+        return {
+            int(x.strip()) for x in self.ADMIN_IDS.split(",")
+            if x.strip().isdigit()
+        }
 
 
 settings = Settings()
