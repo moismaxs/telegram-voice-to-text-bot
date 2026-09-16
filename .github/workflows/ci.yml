@@ -20,5 +20,5 @@ jobs:
           args: check app
       - name: Compose config check
         run: |
-          printf 'BOT_TOKEN=dummy:token\nMODEL_SIZE=tiny\n' > /tmp/ci.env
-          docker compose --env-file /tmp/ci.env config -q
+          cp .env.example .env
+          docker compose config -q
