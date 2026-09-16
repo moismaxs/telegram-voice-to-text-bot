@@ -1,16 +1,23 @@
-"""STT на faster-whisper + конвертация ogg->wav через ffmpeg."""
+"""STT: локальный faster-whisper + ffmpeg, либо Whisper API через Groq."""
 import logging
 import os
 import subprocess
 from pathlib import Path
 
+import httpx
 from faster_whisper import WhisperModel
 
 from app.config import settings
 
 log = logging.getLogger(__name__)
 
+GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
 _model: WhisperModel | None = None
+
+
+class RateLimitedError(RuntimeError):
+    """429 от STT API — попросить пользователя повторить позже."""
 
 
 def _cache_dir() -> str | None:
@@ -84,3 +91,30 @@ def transcribe_wav(wav_path: Path, language: str = "ru") -> str:
     log.info("Распознано, язык=%s prob=%.2f", info.language, info.language_probability)
     text = " ".join(s.text.strip() for s in segments).strip()
     return text
+
+
+def transcribe_via_groq(audio_path: Path, language: str = "ru", timeout: int = 120) -> str:
+    """Whisper API через Groq. Блокирующий вызов — запускать через asyncio.to_thread."""
+    if not settings.GROQ_API_KEY:
+        raise RuntimeError("STT_PROVIDER=groq, но GROQ_API_KEY не задан")
+    log.info("Отправка %.1fКБ в Groq (%s)...", audio_path.stat().st_size / 1024, settings.GROQ_MODEL)
+    with audio_path.open("rb") as f:
+        resp = httpx.post(
+            GROQ_URL,
+            headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+            files={"file": (audio_path.name, f, "audio/wav")},
+            data={"model": settings.GROQ_MODEL, "language": language, "response_format": "json"},
+            timeout=timeout,
+        )
+    if resp.status_code == 429:
+        raise RateLimitedError("Groq rate limit, повтори позже")
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Groq API {resp.status_code}: {resp.text[:300]}")
+    return resp.json().get("text", "").strip()
+
+
+def transcribe_file(wav_path: Path, language: str = "ru") -> str:
+    """Диспетчер бэкендов. Блокирующий вызов — запускать через asyncio.to_thread."""
+    if settings.STT_PROVIDER == "groq":
+        return transcribe_via_groq(wav_path, language)
+    return transcribe_wav(wav_path, language)

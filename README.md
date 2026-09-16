@@ -93,6 +93,19 @@ python -m app.main
 | `MAX_DURATION_SEC` | `300` | отказ, если длиннее |
 | `TMP_DIR` | `/tmp/voices` | временные файлы (чистятся сами) |
 | `HF_HUB_CACHE` | авто | куда качать веса: `/data/hf_cache`, если есть персистентное хранилище (нужно на хостингах с маленьким эфемерным диском) |
+| `STT_PROVIDER` | `local` | `local` — faster-whisper на своём CPU (~1ГБ RAM) или `groq` — Whisper API (~200МБ RAM) |
+| `GROQ_API_KEY` | — | ключ с [console.groq.com](https://console.groq.com) (бесплатно, без карты), нужен при `STT_PROVIDER=groq` |
+| `GROQ_MODEL` | `whisper-large-v3-turbo` | модель Groq для расшифровки |
+
+## Groq вместо локальной модели
+
+Если на хостинге мало RAM (тариф 1 ГБ и меньше), локальный `small` не влезет. Тогда:
+
+1. Зарегистрируйся на [console.groq.com](https://console.groq.com) (email/Google, карта не нужна) → API Keys → Create.
+2. Поставь `STT_PROVIDER=groq` и `GROQ_API_KEY=gsk_...`, перезапусти.
+3. Качество — уровень `whisper-large-v3-turbo` (выше локального `small`), ответ за секунды, лимиты free-tier: 20 запр/мин, 2000/день.
+
+Нюанс: аудио уходит на внешний API (приватность ниже, чем при локальной расшифровке).
 
 ## Структура
 

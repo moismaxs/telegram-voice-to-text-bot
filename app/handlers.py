@@ -10,7 +10,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from app.config import settings
-from app.stt import convert_to_wav, transcribe_wav
+from app.stt import RateLimitedError, convert_to_wav, transcribe_file
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -109,7 +109,7 @@ async def handle_voice(message: Message, bot: Bot) -> None:
 
         async with SEMAPHORE:
             await asyncio.to_thread(convert_to_wav, src_path, wav_path)
-            text = await asyncio.to_thread(transcribe_wav, wav_path)
+            text = await asyncio.to_thread(transcribe_file, wav_path)
 
         if not text:
             await status.edit_text("😕 Не смог распознать речь — тихо или одни шумы.")
@@ -143,6 +143,10 @@ async def handle_voice(message: Message, bot: Bot) -> None:
                 f"📝 <b>Расшифровка</b> от {user_mention}:\n\n{safe_text}"
             )
         await status.delete()
+    except RateLimitedError:
+        log.warning("STT rate limit, file_id=%s", file_id)
+        with contextlib.suppress(Exception):
+            await status.edit_text("⏳ Сервис распознавания перегружен, попробуй ещё раз через минуту.")
     except Exception:
         log.exception("Ошибка расшифровки file_id=%s", file_id)
         with contextlib.suppress(Exception):
