@@ -46,7 +46,14 @@ def transcribe_wav(wav_path: Path, language: str = "ru") -> str:
         str(wav_path),
         language=language,
         beam_size=5,
+        best_of=5,
+        # перебор температур спасает сложные куски (шум, акцент, быстрая речь)
+        temperature=(0.0, 0.2, 0.4, 0.6),
+        # подсказка модели: какой текст ожидать (заметно чистит русский)
+        initial_prompt="Это расшифровка голосового сообщения на русском языке.",
+        condition_on_previous_text=True,
         vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 500},
     )
     log.info("Распознано, язык=%s prob=%.2f", info.language, info.language_probability)
     text = " ".join(s.text.strip() for s in segments).strip()
