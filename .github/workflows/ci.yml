@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile check
+        run: python -m compileall -q app
+      - name: Ruff
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: check app
+      - name: Compose config check
+        run: |
+          printf 'BOT_TOKEN=dummy:token\nMODEL_SIZE=tiny\n' > /tmp/ci.env
+          docker compose --env-file /tmp/ci.env config -q
