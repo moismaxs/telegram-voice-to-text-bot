@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
@@ -92,6 +93,39 @@ def _extract_file(message: Message) -> tuple[str, int | None, str] | None:
     return None
 
 
+async def _tg_call(factory, *, tries: int = 3):
+    """Повтор вызовов Bot API при сетевых обрывах (ServerDisconnected и т.п.).
+
+    factory — callable без аргументов, каждый раз создающий новую корутину.
+    """
+    last_exc: TelegramNetworkError | None = None
+    for attempt in range(1, tries + 1):
+        try:
+            return await factory()
+        except TelegramNetworkError as e:
+            last_exc = e
+            log.warning("Telegram API обрыв (попытка %s/%s): %s", attempt, tries, e)
+            await asyncio.sleep(attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+async def _drop_status(status: Message | None) -> None:
+    """Убрать статусное сообщение. Никогда не кидает исключений."""
+    if status is not None:
+        with contextlib.suppress(Exception):
+            await status.delete()
+
+
+async def _set_status(status: Message | None, message: Message, text: str) -> None:
+    """Показать ошибку: правим статус, а если его нет — отвечаем в чат. Best-effort."""
+    with contextlib.suppress(Exception):
+        if status is not None:
+            await status.edit_text(text)
+        else:
+            await message.reply(text)
+
+
 @router.message(F.voice | F.audio | F.video_note)
 async def handle_voice(message: Message, bot: Bot) -> None:
     extracted = _extract_file(message)
@@ -122,7 +156,11 @@ async def handle_voice(message: Message, bot: Bot) -> None:
         status_text = f"⏳ Расшифровываю {label} (~{duration}с), это займёт ~30–60с..."
     else:
         status_text = "⏳ Расшифровываю, секунду..."
-    status = await message.reply(status_text)
+    try:
+        status: Message | None = await _tg_call(lambda: message.reply(status_text))
+    except TelegramNetworkError:
+        log.warning("Не смог отправить статус file_id=%s, продолжаю без него", file_id)
+        status = None
     ok = False
     tmp_dir = Path(settings.TMP_DIR)
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -140,7 +178,7 @@ async def handle_voice(message: Message, bot: Bot) -> None:
             text = await asyncio.to_thread(transcribe_file, wav_path)
 
         if not text:
-            await status.edit_text("😕 Не смог распознать речь — тихо или одни шумы.")
+            await _set_status(status, message, "😕 Не смог распознать речь — тихо или одни шумы.")
             return
 
         # лимит Telegram ~4096 символов
@@ -165,21 +203,25 @@ async def handle_voice(message: Message, bot: Bot) -> None:
                 fwd_suffix = f"\n\n<i>↪️ переслано от {html.escape(str(fwd_name))}</i>"
 
         if is_private:
-            await message.reply(f"📝 <b>Расшифровка:</b>\n\n{safe_text}{fwd_suffix}")
+            reply_text = f"📝 <b>Расшифровка:</b>\n\n{safe_text}{fwd_suffix}"
         else:
-            await message.reply(
-                f"📝 <b>Расшифровка</b> от {user_mention}:\n\n{safe_text}"
-            )
+            reply_text = f"📝 <b>Расшифровка</b> от {user_mention}:\n\n{safe_text}"
+        try:
+            await _tg_call(lambda: message.reply(reply_text), tries=2)
+        except TelegramNetworkError:
+            # reply мог не дойти — дублируем текст правкой статуса, чтобы не потерять
+            log.warning("Не смог отправить расшифровку file_id=%s, дублирую в статус", file_id)
+            await _set_status(status, message, reply_text)
+            ok = True
+            return
         ok = True
-        await status.delete()
+        await _drop_status(status)
     except RateLimitedError:
         log.warning("STT rate limit, file_id=%s", file_id)
-        with contextlib.suppress(Exception):
-            await status.edit_text("⏳ Сервис распознавания перегружен, попробуй ещё раз через минуту.")
+        await _set_status(status, message, "⏳ Сервис распознавания перегружен, попробуй ещё раз через минуту.")
     except Exception:
         log.exception("Ошибка расшифровки file_id=%s", file_id)
-        with contextlib.suppress(Exception):
-            await status.edit_text("❌ Ошибка расшифровки, попробуй ещё раз чуть позже.")
+        await _set_status(status, message, "❌ Ошибка расшифровки, попробуй ещё раз чуть позже.")
     finally:
         track_event(user.id, message.chat.id, message.chat.type, label, duration, ok=ok)
         for p in (src_path, wav_path):
