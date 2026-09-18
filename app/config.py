@@ -18,8 +18,6 @@ class Settings(BaseSettings):
     ADMIN_IDS: str = ""
     # Пусто — авто: /data/voices.db если есть /data, иначе voices.db рядом.
     DB_PATH: str = ""
-    # Ключ TeleAds (панель teleads.pro). Пусто — реклама отключена, бот работает как раньше.
-    TELEADS_API_KEY: str = ""
 
     def admin_ids(self) -> set[int]:
         return {

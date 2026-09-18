@@ -32,21 +32,6 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(router)
 
-    # TeleAds: статистика + рекламный флоу. Внутренние апдейты платформы
-    # middleware отфильтровывает сам — хендлеры их не увидят.
-    # Без ключа или при ошибке импорта бот работает как раньше, без рекламы.
-    if settings.TELEADS_API_KEY:
-        try:
-            from teleads.aiogram3 import BapMiddleware
-
-            dp.update.middleware(BapMiddleware(settings.TELEADS_API_KEY))
-        except Exception:
-            log.exception("Не удалось подключить TeleAds, работаем без рекламы")
-        else:
-            log.info("TeleAds подключён")
-    else:
-        log.info("TELEADS_API_KEY не задан, реклама отключена")
-
     # Прогрев локальной модели до polling имеет смысл только для local:
     # в режиме groq веса не нужны, а грузить 500МБ в RAM зря — вредно.
     if settings.STT_PROVIDER == "local":
